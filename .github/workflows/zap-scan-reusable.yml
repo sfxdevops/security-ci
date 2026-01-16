@@ -229,4 +229,5 @@ jobs:
         fi
         
 
+
         echo "✓ No critical vulnerabilities found"
