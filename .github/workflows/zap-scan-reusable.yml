@@ -1,0 +1,232 @@
+# .github/workflows/zap-scan-reusable.yml
+
+name: Reusable ZAP Security Scan
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Environment to scan (snapshot-preprod, prod, etc.)'
+        required: true
+        type: string
+      app_name:
+        description: 'Application name (e.g., biosmartx)'
+        required: true
+        type: string
+      service_name:
+        description: 'Service name (e.g., nin-processing-queue)'
+        required: true
+        type: string
+      wait_time:
+        description: 'Seconds to wait for deployment to stabilize'
+        required: false
+        type: number
+        default: 90
+    secrets:
+      DEFECTDOJO_URL:
+        required: true
+      DEFECTDOJO_API_KEY:
+        required: true
+      DEFECTDOJO_ENGAGEMENT_PREPROD:
+        required: false
+      DEFECTDOJO_ENGAGEMENT_PROD:
+        required: false
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write        
+
+jobs:
+  zap-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout security scripts
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        pip install requests
+    
+    - name: Configure scan parameters
+      id: config
+      run: |
+        ENV="${{ inputs.environment }}"
+        APP="${{ inputs.app_name }}"
+        SERVICE="${{ inputs.service_name }}"
+        
+        # Build target URL based on your naming convention
+        # Adjust this pattern to match your actual URLs
+        if [ "$ENV" == "preprod" ]; then
+          TARGET_URL="https://seamtel-preprod.seamfix.com"
+          ENGAGEMENT_ID="${{ secrets.DEFECTDOJO_ENGAGEMENT_PREPROD }}"
+        elif [ "$ENV" == "prod" ]; then
+          TARGET_URL="https://seamtel-preprod.seamfix.com"
+          ENGAGEMENT_ID="${{ secrets.DEFECTDOJO_ENGAGEMENT_PROD }}"
+        else
+          TARGET_URL="https://seamtel-preprod.seamfix.com"
+          ENGAGEMENT_ID="${{ secrets.DEFECTDOJO_ENGAGEMENT_PREPROD }}"  # default
+        fi
+        
+        echo "target_url=$TARGET_URL" >> $GITHUB_OUTPUT
+        echo "engagement_id=$ENGAGEMENT_ID" >> $GITHUB_OUTPUT
+        
+        echo "### ZAP Scan Configuration" >> $GITHUB_STEP_SUMMARY
+        echo "- **Target URL**: $TARGET_URL" >> $GITHUB_STEP_SUMMARY
+        echo "- **Environment**: $ENV" >> $GITHUB_STEP_SUMMARY
+        echo "- **Application**: $APP" >> $GITHUB_STEP_SUMMARY
+        echo "- **Service**: $SERVICE" >> $GITHUB_STEP_SUMMARY
+    
+    - name: Wait for Argo CD deployment
+      run: |
+        echo "Waiting ${{ inputs.wait_time }} seconds for Argo CD to sync and app to stabilize..."
+        sleep ${{ inputs.wait_time }}
+    
+    - name: Check if application is reachable
+      id: health_check
+      run: |
+        TARGET_URL="${{ steps.config.outputs.target_url }}"
+        MAX_ATTEMPTS=30
+        ATTEMPT=1
+        
+        echo "Checking if $TARGET_URL is reachable..."
+        
+        while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+          # Try to reach the app (adjust health endpoint as needed)
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${TARGET_URL}/health" 2>/dev/null || echo "000")
+          
+          if [ "$HTTP_CODE" == "200" ] || [ "$HTTP_CODE" == "404" ] || [ "$HTTP_CODE" == "401" ]; then
+            echo "✓ Application is reachable (HTTP $HTTP_CODE)"
+            echo "is_reachable=true" >> $GITHUB_OUTPUT
+            break
+          fi
+          
+          echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - HTTP $HTTP_CODE - Waiting..."
+          sleep 10
+          ATTEMPT=$((ATTEMPT + 1))
+        done
+        
+        if [ $ATTEMPT -gt $MAX_ATTEMPTS ]; then
+          echo "::warning::Application not reachable after $MAX_ATTEMPTS attempts"
+          echo "is_reachable=false" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Run ZAP Baseline Scan
+      id: zap_scan
+      if: steps.health_check.outputs.is_reachable == 'true'
+      run: |
+        TARGET_URL="${{ steps.config.outputs.target_url }}"
+        REPORT_DIR="./zap-reports"
+        mkdir -p $REPORT_DIR
+        
+        TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+        REPORT_JSON="$REPORT_DIR/zap-report-$TIMESTAMP.json"
+        REPORT_HTML="$REPORT_DIR/zap-report-$TIMESTAMP.html"
+        
+        echo "Starting ZAP scan against $TARGET_URL"
+        
+        # Run ZAP in Docker
+        docker run --rm \
+          -v $(pwd)/$REPORT_DIR:/zap/wrk:rw \
+          --name zap-scanner \
+          owasp/zap2docker-stable:latest \
+          zap-baseline.py \
+          -t "$TARGET_URL" \
+          -J "zap-report-$TIMESTAMP.json" \
+          -r "zap-report-$TIMESTAMP.html" \
+          -I || ZAP_EXIT_CODE=$?
+        
+        # ZAP exit codes:
+        # 0 = no alerts
+        # 1 = warnings
+        # 2 = high risk alerts
+        # 3 = critical risk alerts
+        
+        echo "ZAP scan completed with exit code: ${ZAP_EXIT_CODE:-0}"
+        echo "zap_exit_code=${ZAP_EXIT_CODE:-0}" >> $GITHUB_OUTPUT
+        echo "report_json=$REPORT_JSON" >> $GITHUB_OUTPUT
+        echo "report_html=$REPORT_HTML" >> $GITHUB_OUTPUT
+        
+        # Parse ZAP results for summary
+        if [ -f "$REPORT_JSON" ]; then
+          ALERT_COUNT=$(jq '.site[0].alerts | length' "$REPORT_JSON" 2>/dev/null || echo "0")
+          echo "alert_count=$ALERT_COUNT" >> $GITHUB_OUTPUT
+          
+          HIGH_COUNT=$(jq '[.site[0].alerts[] | select(.riskcode == "3")] | length' "$REPORT_JSON" 2>/dev/null || echo "0")
+          MEDIUM_COUNT=$(jq '[.site[0].alerts[] | select(.riskcode == "2")] | length' "$REPORT_JSON" 2>/dev/null || echo "0")
+          LOW_COUNT=$(jq '[.site[0].alerts[] | select(.riskcode == "1")] | length' "$REPORT_JSON" 2>/dev/null || echo "0")
+          
+          echo "high_count=$HIGH_COUNT" >> $GITHUB_OUTPUT
+          echo "medium_count=$MEDIUM_COUNT" >> $GITHUB_OUTPUT
+          echo "low_count=$LOW_COUNT" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Upload results to DefectDojo
+      if: steps.health_check.outputs.is_reachable == 'true'
+      run: |
+        python3 scripts/defectdojo-import.py \
+          --report "${{ steps.zap_scan.outputs.report_json }}" \
+          --url "${{ secrets.DEFECTDOJO_URL }}" \
+          --api-key "${{ secrets.DEFECTDOJO_API_KEY }}" \
+          --engagement-id "${{ steps.config.outputs.engagement_id }}" \
+          --scan-type "ZAP Scan" \
+          --environment "${{ inputs.environment }}" \
+          --app-name "${{ inputs.app_name }}" \
+          --service-name "${{ inputs.service_name }}"
+    
+    - name: Upload ZAP reports as artifacts
+      uses: actions/upload-artifact@v3
+      if: always() && steps.health_check.outputs.is_reachable == 'true'
+      with:
+        name: zap-reports-${{ inputs.environment }}-${{ inputs.service_name }}
+        path: zap-reports/*
+        retention-days: 30
+    
+    - name: Generate scan summary
+      if: always() && steps.health_check.outputs.is_reachable == 'true'
+      run: |
+        ZAP_EXIT_CODE="${{ steps.zap_scan.outputs.zap_exit_code }}"
+        HIGH="${{ steps.zap_scan.outputs.high_count }}"
+        MEDIUM="${{ steps.zap_scan.outputs.medium_count }}"
+        LOW="${{ steps.zap_scan.outputs.low_count }}"
+        
+        echo "## ZAP Scan Results 🔒" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Target**: ${{ steps.config.outputs.target_url }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Vulnerabilities Found" >> $GITHUB_STEP_SUMMARY
+        echo "- 🔴 High: ${HIGH:-0}" >> $GITHUB_STEP_SUMMARY
+        echo "- 🟡 Medium: ${MEDIUM:-0}" >> $GITHUB_STEP_SUMMARY
+        echo "- 🔵 Low: ${LOW:-0}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "$ZAP_EXIT_CODE" -ge 2 ]; then
+          echo "### ⚠️ CRITICAL VULNERABILITIES DETECTED" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "High or critical risk vulnerabilities were found!" >> $GITHUB_STEP_SUMMARY
+          echo "Please review the findings in DefectDojo: ${{ secrets.DEFECTDOJO_URL }}" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "### ✅ No Critical Issues" >> $GITHUB_STEP_SUMMARY
+          echo "No high or critical vulnerabilities detected." >> $GITHUB_STEP_SUMMARY
+        fi
+    
+    - name: Fail if critical vulnerabilities found
+      if: steps.health_check.outputs.is_reachable == 'true'
+      run: |
+        ZAP_EXIT_CODE="${{ steps.zap_scan.outputs.zap_exit_code }}"
+        
+        if [ "$ZAP_EXIT_CODE" -ge 2 ]; then
+          echo "::error::Critical vulnerabilities detected in ${{ inputs.environment }}!"
+          echo "::error::Review DefectDojo: ${{ secrets.DEFECTDOJO_URL }}"
+          echo "::error::High risk count: ${{ steps.zap_scan.outputs.high_count }}"
+          exit 1
+        fi
+        
+
+        echo "✓ No critical vulnerabilities found"
