@@ -125,6 +125,9 @@ jobs:
           echo "::warning::Application not reachable after $MAX_ATTEMPTS attempts"
           echo "is_reachable=false" >> $GITHUB_OUTPUT
         fi
+
+    - name: Install jq
+      run: sudo apt-get update && sudo apt-get install -y jq
     
     - name: Run ZAP Baseline Scan
       id: zap_scan
@@ -148,8 +151,8 @@ jobs:
           zaproxy/zap-stable:latest \
           zap-baseline.py \
           -t "$TARGET_URL" \
-          -J "/zap/wrk/zap-report-$TIMESTAMP.json" \
-          -r "/zap/wrk/zap-report-$TIMESTAMP.html" \
+          -J "zap-report-$TIMESTAMP.json" \
+          -r "zap-report-$TIMESTAMP.html" \
           -I || ZAP_EXIT_CODE=$?
               
                         
@@ -242,6 +245,7 @@ jobs:
 
 
         echo "✓ No critical vulnerabilities found"
+
 
 
 
