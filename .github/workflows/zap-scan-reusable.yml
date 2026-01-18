@@ -142,7 +142,7 @@ jobs:
         
         # Run ZAP in Docker
         docker run --rm \
-          -u $(id -u):$(id -g)
+          -u $(id -u):$(id -g) \
           -v $(pwd)/$REPORT_DIR:/zap/wrk:rw \
           --name zap-scanner \
           zaproxy/zap-stable:latest \
@@ -241,6 +241,7 @@ jobs:
 
 
         echo "✓ No critical vulnerabilities found"
+
 
 
 
