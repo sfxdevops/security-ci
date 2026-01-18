@@ -144,7 +144,7 @@ jobs:
         docker run --rm \
           -v $(pwd)/$REPORT_DIR:/zap/wrk:rw \
           --name zap-scanner \
-          owasp/zap2docker-stable:latest \
+          zaproxy/zap-stable:latest \
           zap-baseline.py \
           -t "$TARGET_URL" \
           -J "zap-report-$TIMESTAMP.json" \
