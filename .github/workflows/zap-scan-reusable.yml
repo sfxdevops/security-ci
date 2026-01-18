@@ -61,18 +61,27 @@ jobs:
         APP="${{ inputs.app_name }}"
         SERVICE="${{ inputs.service_name }}"
         
-        # Build target URL based on your naming convention
-        # Adjust this pattern to match your actual URLs
-        if [ "$ENV" == "preprod" ]; then
-          TARGET_URL="https://seamtel-preprod.seamfix.com"
-          ENGAGEMENT_ID="${{ secrets.DEFECTDOJO_ENGAGEMENT_PREPROD }}"
-        elif [ "$ENV" == "prod" ]; then
-          TARGET_URL="https://seamtel-preprod.seamfix.com"
-          ENGAGEMENT_ID="${{ secrets.DEFECTDOJO_ENGAGEMENT_PROD }}"
-        else
-          TARGET_URL="https://seamtel-preprod.seamfix.com"
-          ENGAGEMENT_ID="${{ secrets.DEFECTDOJO_ENGAGEMENT_PREPROD }}"  # default
-        fi
+        # Build target URL based on environment
+        # Adjust URLs to match your actual application URLs
+        case "$ENV" in
+          snapshot-dev)
+            TARGET_URL="https://seamtel-dev.seamfix.com.ng"  L
+            ENGAGEMENT_ID="${{ secrets.DEFECTDOJO_ENGAGEMENT_DEV }}"
+            ;;
+          snapshot-preprod|preprod)
+            TARGET_URL="https://seamtel-preprod.seamfix.com.ng"
+            ENGAGEMENT_ID="${{ secrets.DEFECTDOJO_ENGAGEMENT_PREPROD }}"
+            ;;
+          prod)
+            TARGET_URL="https://seamtel.seamfix.com.ng"  # Update to actual prod URL
+            ENGAGEMENT_ID="${{ secrets.DEFECTDOJO_ENGAGEMENT_PROD }}"
+            ;;
+          *)
+            echo "::error::Unknown environment: $ENV"
+            echo "Supported: snapshot-dev, snapshot-preprod, prod"
+            exit 1
+            ;;
+        esac
         
         echo "target_url=$TARGET_URL" >> $GITHUB_OUTPUT
         echo "engagement_id=$ENGAGEMENT_ID" >> $GITHUB_OUTPUT
@@ -82,6 +91,7 @@ jobs:
         echo "- **Environment**: $ENV" >> $GITHUB_STEP_SUMMARY
         echo "- **Application**: $APP" >> $GITHUB_STEP_SUMMARY
         echo "- **Service**: $SERVICE" >> $GITHUB_STEP_SUMMARY
+        echo "- **Engagement ID**: $ENGAGEMENT_ID" >> $GITHUB_STEP_SUMMARY
     
     - name: Wait for Argo CD deployment
       run: |
