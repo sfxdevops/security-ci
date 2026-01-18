@@ -150,9 +150,8 @@ jobs:
           -t "$TARGET_URL" \
           -J "/zap/wrk/zap-report-$TIMESTAMP.json" \
           -r "/zap/wrk/zap-report-$TIMESTAMP.html" \
-          -z "-configfile /zap/wrk/zap.yaml" \
-          -I || ZAP_EXIT_CODE=$?              
-        
+          -I || ZAP_EXIT_CODE=$?          
+                
         # ZAP exit codes:
         # 0 = no alerts
         # 1 = warnings
@@ -242,6 +241,7 @@ jobs:
 
 
         echo "✓ No critical vulnerabilities found"
+
 
 
 
