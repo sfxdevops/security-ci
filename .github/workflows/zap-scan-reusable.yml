@@ -62,10 +62,9 @@ jobs:
         SERVICE="${{ inputs.service_name }}"
         
         # Build target URL based on environment
-        # Adjust URLs to match your actual application URLs
         case "$ENV" in
-          snapshot-dev)
-            TARGET_URL="https://seamtel-dev.seamfix.com.ng"  L
+          dev)
+            TARGET_URL="https://seamtel-dev.seamfix.com.ng"  
             ENGAGEMENT_ID="${{ secrets.DEFECTDOJO_ENGAGEMENT_DEV }}"
             ;;
           snapshot-preprod|preprod)
@@ -241,4 +240,5 @@ jobs:
 
 
         echo "✓ No critical vulnerabilities found"
+
 
