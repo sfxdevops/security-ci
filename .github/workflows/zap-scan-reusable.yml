@@ -148,9 +148,10 @@ jobs:
           zaproxy/zap-stable:latest \
           zap-baseline.py \
           -t "$TARGET_URL" \
-          -J "zap-report-$TIMESTAMP.json" \
-          -r "zap-report-$TIMESTAMP.html" \
-          -I || ZAP_EXIT_CODE=$?
+          -J "/zap/wrk/zap-report-$TIMESTAMP.json" \
+          -r "/zap/wrk/zap-report-$TIMESTAMP.html" \
+          -z "-configfile /zap/wrk/zap.yaml" \
+          -I || ZAP_EXIT_CODE=$?              
         
         # ZAP exit codes:
         # 0 = no alerts
@@ -241,6 +242,7 @@ jobs:
 
 
         echo "✓ No critical vulnerabilities found"
+
 
 
 
