@@ -142,16 +142,17 @@ jobs:
         
         # Run ZAP in Docker
         docker run --rm \
-          -u $(id -u):$(id -g) \
           -v $(pwd)/$REPORT_DIR:/zap/wrk:rw \
           --name zap-scanner \
+          -u 0:0 \
           zaproxy/zap-stable:latest \
           zap-baseline.py \
           -t "$TARGET_URL" \
           -J "/zap/wrk/zap-report-$TIMESTAMP.json" \
           -r "/zap/wrk/zap-report-$TIMESTAMP.html" \
-          -I || ZAP_EXIT_CODE=$?          
-                
+          -I || ZAP_EXIT_CODE=$?
+              
+                        
         # ZAP exit codes:
         # 0 = no alerts
         # 1 = warnings
@@ -241,6 +242,7 @@ jobs:
 
 
         echo "✓ No critical vulnerabilities found"
+
 
 
 
