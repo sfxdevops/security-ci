@@ -2,19 +2,28 @@
 import requests
 import argparse
 import sys
-import json
+import os
 from datetime import datetime
 
 def upload_to_defectdojo(args):
     """Upload scan results to DefectDojo"""
     
-    # Read the ZAP report
+    # Read the report file in binary mode to handle both XML and JSON
     try:
-        with open(args.report, 'r') as f:
+        with open(args.report, 'rb') as f:
             report_data = f.read()
     except FileNotFoundError:
         print(f"❌ Error: Report file not found: {args.report}")
         sys.exit(1)
+    
+    # Determine content type based on file extension
+    file_ext = os.path.splitext(args.report)[1].lower()
+    if file_ext == '.xml':
+        content_type = 'application/xml'
+    elif file_ext == '.json':
+        content_type = 'application/json'
+    else:
+        content_type = 'application/octet-stream'
     
     # Prepare the upload
     url = f"{args.url.rstrip('/')}/api/v2/import-scan/"
@@ -24,8 +33,9 @@ def upload_to_defectdojo(args):
     }
     
     # Prepare multipart form data
+    filename = os.path.basename(args.report)
     files = {
-        'file': (args.report.split('/')[-1], report_data, 'application/json')
+        'file': (filename, report_data, content_type)
     }
     
     data = {
@@ -45,6 +55,8 @@ def upload_to_defectdojo(args):
     print(f"   URL: {url}")
     print(f"   Engagement ID: {args.engagement_id}")
     print(f"   Test Title: {data['test_title']}")
+    print(f"   File: {filename} ({content_type})")
+    print(f"   Scan Type: {args.scan_type}")
     
     try:
         response = requests.post(
@@ -72,12 +84,12 @@ def upload_to_defectdojo(args):
         return 1
 
 def main():
-    parser = argparse.ArgumentParser(description='Upload ZAP scan results to DefectDojo')
-    parser.add_argument('--report', required=True, help='Path to ZAP JSON report')
+    parser = argparse.ArgumentParser(description='Upload scan results to DefectDojo')
+    parser.add_argument('--report', required=True, help='Path to scan report (XML, JSON, or SARIF)')
     parser.add_argument('--url', required=True, help='DefectDojo URL')
     parser.add_argument('--api-key', required=True, help='DefectDojo API key')
     parser.add_argument('--engagement-id', required=True, help='DefectDojo engagement ID')
-    parser.add_argument('--scan-type', default='ZAP Scan', help='Scan type')
+    parser.add_argument('--scan-type', default='ZAP Scan', help='Scan type (e.g., ZAP Scan, SARIF)')
     parser.add_argument('--environment', required=True, help='Environment name')
     parser.add_argument('--app-name', required=True, help='Application name')
     parser.add_argument('--service-name', required=True, help='Service name')
