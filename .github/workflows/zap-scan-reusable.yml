@@ -181,18 +181,18 @@ jobs:
           echo "low_count=$LOW_COUNT" >> $GITHUB_OUTPUT
         fi
     
-    # - name: Upload results to DefectDojo
-    #   if: steps.health_check.outputs.is_reachable == 'true'
-    #   run: |
-    #     python3 scripts/defectdojo-import.py \
-    #       --report "${{ steps.zap_scan.outputs.report_json }}" \
-    #       --url "${{ secrets.DEFECTDOJO_URL }}" \
-    #       --api-key "${{ secrets.DEFECTDOJO_API_KEY }}" \
-    #       --engagement-id "${{ steps.config.outputs.engagement_id }}" \
-    #       --scan-type "ZAP Scan" \
-    #       --environment "${{ inputs.environment }}" \
-    #       --app-name "${{ inputs.app_name }}" \
-    #       --service-name "${{ inputs.service_name }}"
+    - name: Upload results to DefectDojo
+      if: steps.health_check.outputs.is_reachable == 'true'
+      run: |
+        python3 scripts/defectdojo-import.py \
+          --report "${{ steps.zap_scan.outputs.report_json }}" \
+          --url "${{ secrets.DEFECTDOJO_URL }}" \
+          --api-key "${{ secrets.DEFECTDOJO_API_KEY }}" \
+          --engagement-id "${{ steps.config.outputs.engagement_id }}" \
+          --scan-type "ZAP Scan" \
+          --environment "${{ inputs.environment }}" \
+          --app-name "${{ inputs.app_name }}" \
+          --service-name "${{ inputs.service_name }}"
     
     - name: Upload ZAP reports as artifacts
       uses: actions/upload-artifact@v4
@@ -245,6 +245,7 @@ jobs:
 
 
         echo "✓ No critical vulnerabilities found"
+
 
 
 
