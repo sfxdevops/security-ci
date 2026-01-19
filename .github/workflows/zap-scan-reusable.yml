@@ -138,12 +138,12 @@ jobs:
         mkdir -p $REPORT_DIR
         
         TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-        REPORT_JSON="$REPORT_DIR/zap-report-$TIMESTAMP.json"
+        REPORT_XML="$REPORT_DIR/zap-report-$TIMESTAMP.xml"  
         REPORT_HTML="$REPORT_DIR/zap-report-$TIMESTAMP.html"
         
         echo "Starting ZAP scan against $TARGET_URL"
         
-        # Run ZAP in Docker
+        # Run ZAP in Docker - use -x for XML output
         docker run --rm \
           -v $(pwd)/$REPORT_DIR:/zap/wrk:rw \
           --name zap-scanner \
@@ -151,30 +151,21 @@ jobs:
           zaproxy/zap-stable:latest \
           zap-baseline.py \
           -t "$TARGET_URL" \
-          -J "zap-report-$TIMESTAMP.json" \
+          -x "zap-report-$TIMESTAMP.xml" \
           -r "zap-report-$TIMESTAMP.html" \
           -I || ZAP_EXIT_CODE=$?
-              
-                        
-        # ZAP exit codes:
-        # 0 = no alerts
-        # 1 = warnings
-        # 2 = high risk alerts
-        # 3 = critical risk alerts
         
         echo "ZAP scan completed with exit code: ${ZAP_EXIT_CODE:-0}"
         echo "zap_exit_code=${ZAP_EXIT_CODE:-0}" >> $GITHUB_OUTPUT
-        echo "report_json=$REPORT_JSON" >> $GITHUB_OUTPUT
+        echo "report_xml=$REPORT_XML" >> $GITHUB_OUTPUT
         echo "report_html=$REPORT_HTML" >> $GITHUB_OUTPUT
         
-        # Parse ZAP results for summary
-        if [ -f "$REPORT_JSON" ]; then
-          ALERT_COUNT=$(jq '.site[0].alerts | length' "$REPORT_JSON" 2>/dev/null || echo "0")
-          echo "alert_count=$ALERT_COUNT" >> $GITHUB_OUTPUT
-          
-          HIGH_COUNT=$(jq '[.site[0].alerts[] | select(.riskcode == "3")] | length' "$REPORT_JSON" 2>/dev/null || echo "0")
-          MEDIUM_COUNT=$(jq '[.site[0].alerts[] | select(.riskcode == "2")] | length' "$REPORT_JSON" 2>/dev/null || echo "0")
-          LOW_COUNT=$(jq '[.site[0].alerts[] | select(.riskcode == "1")] | length' "$REPORT_JSON" 2>/dev/null || echo "0")
+        # Parse XML for summary (requires xmlstarlet or alternative)
+        if [ -f "$REPORT_XML" ]; then
+          # Count alerts by risk level using grep (simple method)
+          HIGH_COUNT=$(grep -c 'riskcode="3"' "$REPORT_XML" 2>/dev/null || echo "0")
+          MEDIUM_COUNT=$(grep -c 'riskcode="2"' "$REPORT_XML" 2>/dev/null || echo "0")
+          LOW_COUNT=$(grep -c 'riskcode="1"' "$REPORT_XML" 2>/dev/null || echo "0")
           
           echo "high_count=$HIGH_COUNT" >> $GITHUB_OUTPUT
           echo "medium_count=$MEDIUM_COUNT" >> $GITHUB_OUTPUT
@@ -185,7 +176,7 @@ jobs:
       if: steps.health_check.outputs.is_reachable == 'true'
       run: |
         python3 scripts/defectdojo-import.py \
-          --report "${{ steps.zap_scan.outputs.report_json }}" \
+          --report "${{ steps.zap_scan.outputs.report_xml }}" \
           --url "${{ secrets.DEFECTDOJO_URL }}" \
           --api-key "${{ secrets.DEFECTDOJO_API_KEY }}" \
           --engagement-id "${{ steps.config.outputs.engagement_id }}" \
@@ -245,6 +236,7 @@ jobs:
 
 
         echo "✓ No critical vulnerabilities found"
+
 
 
 
