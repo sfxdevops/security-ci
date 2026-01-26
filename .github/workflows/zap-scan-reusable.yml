@@ -51,15 +51,17 @@ jobs:
     - name: Install dependencies
       run: |
         pip install requests
+        sudo apt-get update && sudo apt-get install -y jq
     
     - name: Configure scan parameters
       id: config
       run: |
+        set +e
+        
         ENV="${{ inputs.environment }}"
         APP="${{ inputs.app_name }}"
         SERVICE="${{ inputs.service_name }}"
         
-        # Build target URL based on environment
         case "$ENV" in
           dev)
             TARGET_URL="https://seamtel-dev.seamfix.com.ng"  
@@ -75,29 +77,34 @@ jobs:
             ;;
           *)
             echo "::error::Unknown environment: $ENV"
-            echo "Supported: snapshot-dev, snapshot-preprod, prod"
             exit 1
             ;;
         esac
         
-        echo "target_url=${TARGET_URL}" >> $GITHUB_OUTPUT
-        echo "engagement_id=${ENGAGEMENT_ID}" >> $GITHUB_OUTPUT
+        cat >> "$GITHUB_OUTPUT" << ENDCONFIG
+target_url=$TARGET_URL
+engagement_id=$ENGAGEMENT_ID
+ENDCONFIG
         
-        echo "### ZAP Scan Configuration" >> $GITHUB_STEP_SUMMARY
-        echo "- **Target URL**: $TARGET_URL" >> $GITHUB_STEP_SUMMARY
-        echo "- **Environment**: $ENV" >> $GITHUB_STEP_SUMMARY
-        echo "- **Application**: $APP" >> $GITHUB_STEP_SUMMARY
-        echo "- **Service**: $SERVICE" >> $GITHUB_STEP_SUMMARY
-        echo "- **Engagement ID**: $ENGAGEMENT_ID" >> $GITHUB_STEP_SUMMARY
+        cat >> "$GITHUB_STEP_SUMMARY" << ENDSUMMARY
+### ZAP Scan Configuration
+- **Target URL**: $TARGET_URL
+- **Environment**: $ENV
+- **Application**: $APP
+- **Service**: $SERVICE
+- **Engagement ID**: $ENGAGEMENT_ID
+ENDSUMMARY
     
     - name: Wait for Argo CD deployment
       run: |
-        echo "Waiting ${{ inputs.wait_time }} seconds for Argo CD to sync and app to stabilize..."
+        echo "Waiting ${{ inputs.wait_time }} seconds for Argo CD to sync..."
         sleep ${{ inputs.wait_time }}
     
     - name: Check if application is reachable
       id: health_check
       run: |
+        set +e
+        
         TARGET_URL="${{ steps.config.outputs.target_url }}"
         MAX_ATTEMPTS=30
         ATTEMPT=1
@@ -109,8 +116,8 @@ jobs:
           
           if [ "$HTTP_CODE" == "200" ] || [ "$HTTP_CODE" == "404" ] || [ "$HTTP_CODE" == "401" ]; then
             echo "✓ Application is reachable (HTTP $HTTP_CODE)"
-            echo "is_reachable=true" >> $GITHUB_OUTPUT
-            break
+            echo "is_reachable=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           
           echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - HTTP $HTTP_CODE - Waiting..."
@@ -118,48 +125,39 @@ jobs:
           ATTEMPT=$((ATTEMPT + 1))
         done
         
-        if [ $ATTEMPT -gt $MAX_ATTEMPTS ]; then
-          echo "::warning::Application not reachable after $MAX_ATTEMPTS attempts"
-          echo "is_reachable=false" >> $GITHUB_OUTPUT
-        fi
-
-    - name: Install jq
-      run: sudo apt-get update && sudo apt-get install -y jq
+        echo "::warning::Application not reachable after $MAX_ATTEMPTS attempts"
+        echo "is_reachable=false" >> "$GITHUB_OUTPUT"
     
     - name: Run ZAP Baseline Scan
       id: zap_scan
       if: steps.health_check.outputs.is_reachable == 'true'
       run: |
+        set +e
+        
         TARGET_URL="${{ steps.config.outputs.target_url }}"
         REPORT_DIR="./zap-reports"
-        mkdir -p $REPORT_DIR
+        mkdir -p "$REPORT_DIR"
         
         TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-        REPORT_XML="$REPORT_DIR/zap-report-$TIMESTAMP.xml"  
-        REPORT_HTML="$REPORT_DIR/zap-report-$TIMESTAMP.html"
+        REPORT_XML="${REPORT_DIR}/zap-report-${TIMESTAMP}.xml"  
+        REPORT_HTML="${REPORT_DIR}/zap-report-${TIMESTAMP}.html"
         
         echo "Starting ZAP scan against $TARGET_URL"
         
-        # Disable exit on error for this entire section
-        set +e
-        
-        # Run ZAP scan
         docker run --rm \
-          -v $(pwd)/$REPORT_DIR:/zap/wrk:rw \
+          -v "$(pwd)/${REPORT_DIR}:/zap/wrk:rw" \
           --name zap-scanner \
           -u 0:0 \
           zaproxy/zap-stable:latest \
           zap-baseline.py \
           -t "$TARGET_URL" \
-          -x "zap-report-$TIMESTAMP.xml" \
-          -r "zap-report-$TIMESTAMP.html" \
+          -x "zap-report-${TIMESTAMP}.xml" \
+          -r "zap-report-${TIMESTAMP}.html" \
           -I
         
         ZAP_EXIT_CODE=$?
-        
         echo "ZAP scan completed with exit code: ${ZAP_EXIT_CODE}"
         
-        # Parse XML for summary
         if [ -f "$REPORT_XML" ]; then
           HIGH_COUNT=$(grep -c 'riskcode="3"' "$REPORT_XML" 2>/dev/null || echo "0")
           MEDIUM_COUNT=$(grep -c 'riskcode="2"' "$REPORT_XML" 2>/dev/null || echo "0")
@@ -170,18 +168,14 @@ jobs:
           LOW_COUNT=0
         fi
         
-        # Re-enable exit on error ONLY at the very end
-        set -e
-        
-        # Write all outputs together in a single atomic operation
-        {
-          echo "zap_exit_code=${ZAP_EXIT_CODE}"
-          echo "report_xml=${REPORT_XML}"
-          echo "report_html=${REPORT_HTML}"
-          echo "high_count=${HIGH_COUNT}"
-          echo "medium_count=${MEDIUM_COUNT}"
-          echo "low_count=${LOW_COUNT}"
-        } >> $GITHUB_OUTPUT
+        cat >> "$GITHUB_OUTPUT" << ENDSCAN
+zap_exit_code=$ZAP_EXIT_CODE
+report_xml=$REPORT_XML
+report_html=$REPORT_HTML
+high_count=$HIGH_COUNT
+medium_count=$MEDIUM_COUNT
+low_count=$LOW_COUNT
+ENDSCAN
     
     - name: Upload results to DefectDojo
       if: steps.health_check.outputs.is_reachable == 'true'
@@ -198,7 +192,7 @@ jobs:
             --app-name "${{ inputs.app_name }}" \
             --service-name "${{ inputs.service_name }}"
         else
-          echo "::warning::DefectDojo import script not found at scripts/defectdojo-import.py"
+          echo "::warning::DefectDojo import script not found"
         fi
     
     - name: Upload ZAP reports as artifacts
@@ -217,35 +211,42 @@ jobs:
         MEDIUM="${{ steps.zap_scan.outputs.medium_count }}"
         LOW="${{ steps.zap_scan.outputs.low_count }}"
         
-        echo "## ZAP Scan Results 🔒" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Target**: ${{ steps.config.outputs.target_url }}" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### Vulnerabilities Found" >> $GITHUB_STEP_SUMMARY
-        echo "- 🔴 High: ${HIGH:-0}" >> $GITHUB_STEP_SUMMARY
-        echo "- 🟡 Medium: ${MEDIUM:-0}" >> $GITHUB_STEP_SUMMARY
-        echo "- 🔵 Low: ${LOW:-0}" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
+        : ${ZAP_EXIT_CODE:=0}
+        : ${HIGH:=0}
+        : ${MEDIUM:=0}
+        : ${LOW:=0}
         
-        if [ "${ZAP_EXIT_CODE:-0}" -ge 2 ]; then
-          echo "### ⚠️ CRITICAL VULNERABILITIES DETECTED" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "High or critical risk vulnerabilities were found!" >> $GITHUB_STEP_SUMMARY
-          echo "Please review the findings in DefectDojo: ${{ secrets.DEFECTDOJO_URL }}" >> $GITHUB_STEP_SUMMARY
+        cat >> "$GITHUB_STEP_SUMMARY" << ENDSUMMARY
+## ZAP Scan Results 🔒
+
+**Target**: ${{ steps.config.outputs.target_url }}
+
+### Vulnerabilities Found
+- 🔴 High: ${HIGH}
+- 🟡 Medium: ${MEDIUM}
+- 🔵 Low: ${LOW}
+
+ENDSUMMARY
+        
+        if [ "$ZAP_EXIT_CODE" -ge 2 ]; then
+          cat >> "$GITHUB_STEP_SUMMARY" << ENDWARNING
+### ⚠️ CRITICAL VULNERABILITIES DETECTED
+
+High or critical risk vulnerabilities were found!
+Please review the findings in DefectDojo: ${{ secrets.DEFECTDOJO_URL }}
+ENDWARNING
         else
-          echo "### ✅ No Critical Issues" >> $GITHUB_STEP_SUMMARY
-          echo "No high or critical vulnerabilities detected." >> $GITHUB_STEP_SUMMARY
+          cat >> "$GITHUB_STEP_SUMMARY" << ENDOK
+### ✅ No Critical Issues
+No high or critical vulnerabilities detected.
+ENDOK
         fi
     
     - name: Fail if critical vulnerabilities found
       if: steps.health_check.outputs.is_reachable == 'true'
       run: |
         ZAP_EXIT_CODE="${{ steps.zap_scan.outputs.zap_exit_code }}"
-        
-        if [ -z "$ZAP_EXIT_CODE" ]; then
-          echo "::warning::Exit code not available, skipping failure check"
-          exit 0
-        fi
+        : ${ZAP_EXIT_CODE:=0}
         
         if [ "$ZAP_EXIT_CODE" -ge 2 ]; then
           echo "::error::Critical vulnerabilities detected in ${{ inputs.environment }}!"
@@ -255,5 +256,3 @@ jobs:
         fi
         
         echo "✓ No critical vulnerabilities found"
-
-
