@@ -208,7 +208,7 @@ jobs:
         fi
     
     - name: Upload ZAP reports as artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always() && steps.health_check.outputs.is_reachable == 'true'
       with:
         name: zap-reports-${{ inputs.environment }}-${{ inputs.service_name }}
@@ -269,4 +269,5 @@ jobs:
         fi
         
         echo "✓ No critical vulnerabilities found (exit code: $ZAP_EXIT_CODE)"
+
 
