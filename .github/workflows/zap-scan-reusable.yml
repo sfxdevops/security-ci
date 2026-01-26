@@ -54,7 +54,6 @@ jobs:
         sudo apt-get update && sudo apt-get install -y jq
     
     - name: Configure scan parameters
-      id: config
       run: |
         ENV="${{ inputs.environment }}"
         APP="${{ inputs.app_name }}"
@@ -79,8 +78,9 @@ jobs:
             ;;
         esac
         
-        echo "target_url=$TARGET_URL" >> "$GITHUB_OUTPUT"
-        echo "engagement_id=$ENGAGEMENT_ID" >> "$GITHUB_OUTPUT"
+        # Use GITHUB_ENV instead of GITHUB_OUTPUT
+        echo "TARGET_URL=$TARGET_URL" >> "$GITHUB_ENV"
+        echo "ENGAGEMENT_ID=$ENGAGEMENT_ID" >> "$GITHUB_ENV"
         
         echo "### ZAP Scan Configuration" >> "$GITHUB_STEP_SUMMARY"
         echo "- **Target URL**: $TARGET_URL" >> "$GITHUB_STEP_SUMMARY"
@@ -91,24 +91,23 @@ jobs:
     
     - name: Wait for Argo CD deployment
       run: |
-        echo "Waiting ${{ inputs.wait_time }} seconds for Argo CD to sync..."
+        echo "Waiting ${{ inputs.wait_time }} seconds for Argo CD to sync and app to stabilize..."
         sleep ${{ inputs.wait_time }}
     
     - name: Check if application is reachable
-      id: health_check
       run: |
-        TARGET_URL="${{ steps.config.outputs.target_url }}"
         MAX_ATTEMPTS=30
         ATTEMPT=1
         
         echo "Checking if $TARGET_URL is reachable..."
         
+        IS_REACHABLE=false
         while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${TARGET_URL}/health" 2>/dev/null || echo "000")
           
           if [ "$HTTP_CODE" == "200" ] || [ "$HTTP_CODE" == "404" ] || [ "$HTTP_CODE" == "401" ]; then
             echo "✓ Application is reachable (HTTP $HTTP_CODE)"
-            echo "is_reachable=true" >> "$GITHUB_OUTPUT"
+            IS_REACHABLE=true
             break
           fi
           
@@ -117,36 +116,23 @@ jobs:
           ATTEMPT=$((ATTEMPT + 1))
         done
         
-        if [ $ATTEMPT -gt $MAX_ATTEMPTS ]; then
+        if [ "$IS_REACHABLE" = "false" ]; then
           echo "::warning::Application not reachable after $MAX_ATTEMPTS attempts"
-          echo "is_reachable=false" >> "$GITHUB_OUTPUT"
         fi
-
-    - name: Test GITHUB_OUTPUT
-      run: |
-        echo "Simple test"
-        echo "test_value=hello" >> "$GITHUB_OUTPUT"
-        echo "test_number=123" >> "$GITHUB_OUTPUT"
-        echo "Test outputs written"
-    
-    - name: Verify test output
-      run: |
-        echo "GITHUB_OUTPUT contents:"
-        cat "$GITHUB_OUTPUT"
+        
+        # Use GITHUB_ENV
+        echo "IS_REACHABLE=$IS_REACHABLE" >> "$GITHUB_ENV"
     
     - name: Run ZAP Baseline Scan
-      id: zap_scan
-      if: steps.health_check.outputs.is_reachable == 'true'
-      shell: bash
+      if: env.IS_REACHABLE == 'true'
       run: |
         set +e
         
-        TARGET_URL="${{ steps.config.outputs.target_url }}"
         REPORT_DIR="./zap-reports"
         mkdir -p "$REPORT_DIR"
         
         TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-        REPORT_XML="$REPORT_DIR/zap-report-$TIMESTAMP.xml"  
+        REPORT_XML="$REPORT_DIR/zap-report-$TIMESTAMP.xml"
         REPORT_HTML="$REPORT_DIR/zap-report-$TIMESTAMP.html"
         
         echo "Starting ZAP scan against $TARGET_URL"
@@ -161,79 +147,81 @@ jobs:
           -x "zap-report-$TIMESTAMP.xml" \
           -r "zap-report-$TIMESTAMP.html" \
           -I
-
-        echo "ZAP scan completed with exit code: $?"
         
-        # ZAP_EXIT_CODE=$?
-        # echo "ZAP scan completed with exit code: $ZAP_EXIT_CODE"
+        ZAP_EXIT_CODE=$?
+        echo "ZAP scan completed with exit code: $ZAP_EXIT_CODE"
         
-        # if [ -f "$REPORT_XML" ]; then
-        #   HIGH_COUNT=$(grep -c 'riskcode="3"' "$REPORT_XML" 2>/dev/null || echo "0")
-        #   MEDIUM_COUNT=$(grep -c 'riskcode="2"' "$REPORT_XML" 2>/dev/null || echo "0")
-        #   LOW_COUNT=$(grep -c 'riskcode="1"' "$REPORT_XML" 2>/dev/null || echo "0")
-        # else
-        #   HIGH_COUNT=0
-        #   MEDIUM_COUNT=0
-        #   LOW_COUNT=0
-        # fi
+        # Parse XML for summary
+        if [ -f "$REPORT_XML" ]; then
+          HIGH_COUNT=$(grep -c 'riskcode="3"' "$REPORT_XML" 2>/dev/null || echo "0")
+          MEDIUM_COUNT=$(grep -c 'riskcode="2"' "$REPORT_XML" 2>/dev/null || echo "0")
+          LOW_COUNT=$(grep -c 'riskcode="1"' "$REPORT_XML" 2>/dev/null || echo "0")
+        else
+          HIGH_COUNT=0
+          MEDIUM_COUNT=0
+          LOW_COUNT=0
+        fi
         
-        # echo "zap_exit_code=$ZAP_EXIT_CODE" >> "$GITHUB_OUTPUT"
-        # echo "report_xml=$REPORT_XML" >> "$GITHUB_OUTPUT"
-        # echo "report_html=$REPORT_HTML" >> "$GITHUB_OUTPUT"
-        # echo "high_count=$HIGH_COUNT" >> "$GITHUB_OUTPUT"
-        # echo "medium_count=$MEDIUM_COUNT" >> "$GITHUB_OUTPUT"
-        # echo "low_count=$LOW_COUNT" >> "$GITHUB_OUTPUT"
+        # Use GITHUB_ENV instead of GITHUB_OUTPUT
+        echo "ZAP_REPORT_XML=$REPORT_XML" >> "$GITHUB_ENV"
+        echo "ZAP_REPORT_HTML=$REPORT_HTML" >> "$GITHUB_ENV"
+        echo "ZAP_EXIT_CODE=$ZAP_EXIT_CODE" >> "$GITHUB_ENV"
+        echo "ZAP_HIGH_COUNT=$HIGH_COUNT" >> "$GITHUB_ENV"
+        echo "ZAP_MEDIUM_COUNT=$MEDIUM_COUNT" >> "$GITHUB_ENV"
+        echo "ZAP_LOW_COUNT=$LOW_COUNT" >> "$GITHUB_ENV"
         
-        # set -e
-
-    - name: Generate scan summary
-      if: always() && steps.health_check.outputs.is_reachable == 'true'
-      run: |
-        echo "## ZAP Scan Results 🔒" >> "$GITHUB_STEP_SUMMARY"
-        echo "Scan completed - check artifacts for details" >> "$GITHUB_STEP_SUMMARY"
+        echo "Scan variables set:"
+        echo "  Report XML: $REPORT_XML"
+        echo "  Report HTML: $REPORT_HTML"
+        echo "  Exit code: $ZAP_EXIT_CODE"
+        echo "  High: $HIGH_COUNT, Medium: $MEDIUM_COUNT, Low: $LOW_COUNT"
+        
+        set -e
     
     - name: Upload results to DefectDojo
-      if: steps.health_check.outputs.is_reachable == 'true'
+      if: env.IS_REACHABLE == 'true'
       continue-on-error: true
       run: |
+        echo "Attempting to upload report: $ZAP_REPORT_XML"
+        
+        if [ ! -f "$ZAP_REPORT_XML" ]; then
+          echo "::error::Report file not found: $ZAP_REPORT_XML"
+          exit 1
+        fi
+        
         if [ -f "scripts/defectdojo-import.py" ]; then
           python3 scripts/defectdojo-import.py \
-            --report "${{ steps.zap_scan.outputs.report_xml }}" \
+            --report "$ZAP_REPORT_XML" \
             --url "${{ secrets.DEFECTDOJO_URL }}" \
             --api-key "${{ secrets.DEFECTDOJO_API_KEY }}" \
-            --engagement-id "${{ steps.config.outputs.engagement_id }}" \
+            --engagement-id "$ENGAGEMENT_ID" \
             --scan-type "ZAP Scan" \
             --environment "${{ inputs.environment }}" \
             --app-name "${{ inputs.app_name }}" \
             --service-name "${{ inputs.service_name }}"
         else
-          echo "::warning::DefectDojo import script not found"
+          echo "::warning::DefectDojo import script not found at scripts/defectdojo-import.py"
         fi
     
     - name: Upload ZAP reports as artifacts
       uses: actions/upload-artifact@v4
-      if: always() && steps.health_check.outputs.is_reachable == 'true'
+      if: always() && env.IS_REACHABLE == 'true'
       with:
         name: zap-reports-${{ inputs.environment }}-${{ inputs.service_name }}
         path: zap-reports/*
         retention-days: 30
     
     - name: Generate scan summary
-      if: always() && steps.health_check.outputs.is_reachable == 'true'
+      if: always() && env.IS_REACHABLE == 'true'
       run: |
-        ZAP_EXIT_CODE="${{ steps.zap_scan.outputs.zap_exit_code }}"
-        HIGH="${{ steps.zap_scan.outputs.high_count }}"
-        MEDIUM="${{ steps.zap_scan.outputs.medium_count }}"
-        LOW="${{ steps.zap_scan.outputs.low_count }}"
-        
-        ZAP_EXIT_CODE=${ZAP_EXIT_CODE:-0}
-        HIGH=${HIGH:-0}
-        MEDIUM=${MEDIUM:-0}
-        LOW=${LOW:-0}
+        EXIT_CODE=${ZAP_EXIT_CODE:-0}
+        HIGH=${ZAP_HIGH_COUNT:-0}
+        MEDIUM=${ZAP_MEDIUM_COUNT:-0}
+        LOW=${ZAP_LOW_COUNT:-0}
         
         echo "## ZAP Scan Results 🔒" >> "$GITHUB_STEP_SUMMARY"
         echo "" >> "$GITHUB_STEP_SUMMARY"
-        echo "**Target**: ${{ steps.config.outputs.target_url }}" >> "$GITHUB_STEP_SUMMARY"
+        echo "**Target**: $TARGET_URL" >> "$GITHUB_STEP_SUMMARY"
         echo "" >> "$GITHUB_STEP_SUMMARY"
         echo "### Vulnerabilities Found" >> "$GITHUB_STEP_SUMMARY"
         echo "- 🔴 High: $HIGH" >> "$GITHUB_STEP_SUMMARY"
@@ -241,7 +229,7 @@ jobs:
         echo "- 🔵 Low: $LOW" >> "$GITHUB_STEP_SUMMARY"
         echo "" >> "$GITHUB_STEP_SUMMARY"
         
-        if [ "$ZAP_EXIT_CODE" -ge 2 ]; then
+        if [ "$EXIT_CODE" -ge 2 ]; then
           echo "### ⚠️ CRITICAL VULNERABILITIES DETECTED" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "High or critical risk vulnerabilities were found!" >> "$GITHUB_STEP_SUMMARY"
@@ -252,18 +240,15 @@ jobs:
         fi
     
     - name: Fail if critical vulnerabilities found
-      if: steps.health_check.outputs.is_reachable == 'true'
+      if: env.IS_REACHABLE == 'true'
       run: |
-        ZAP_EXIT_CODE="${{ steps.zap_scan.outputs.zap_exit_code }}"
-        ZAP_EXIT_CODE=${ZAP_EXIT_CODE:-0}
+        EXIT_CODE=${ZAP_EXIT_CODE:-0}
         
-        if [ "$ZAP_EXIT_CODE" -ge 2 ]; then
+        if [ "$EXIT_CODE" -ge 2 ]; then
           echo "::error::Critical vulnerabilities detected in ${{ inputs.environment }}!"
           echo "::error::Review DefectDojo: ${{ secrets.DEFECTDOJO_URL }}"
-          echo "::error::High risk count: ${{ steps.zap_scan.outputs.high_count }}"
+          echo "::error::High risk count: ${ZAP_HIGH_COUNT:-0}"
           exit 1
         fi
         
-        echo "✓ No critical vulnerabilities found"
-
-
+        echo "✓ No critical vulnerabilities found (exit code: $EXIT_CODE)"
