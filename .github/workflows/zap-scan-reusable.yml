@@ -70,7 +70,7 @@ jobs:
             ENGAGEMENT_ID="${{ secrets.DEFECTDOJO_ENGAGEMENT_PREPROD }}"
             ;;
           prod)
-            TARGET_URL="https://seamtel.seamfix.com.ng"  # Update to actual prod URL
+            TARGET_URL="https://seamtel.seamfix.com.ng"
             ENGAGEMENT_ID="${{ secrets.DEFECTDOJO_ENGAGEMENT_PROD }}"
             ;;
           *)
@@ -105,7 +105,6 @@ jobs:
         echo "Checking if $TARGET_URL is reachable..."
         
         while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
-          # Try to reach the app (adjust health endpoint as needed)
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${TARGET_URL}/health" 2>/dev/null || echo "000")
           
           if [ "$HTTP_CODE" == "200" ] || [ "$HTTP_CODE" == "404" ] || [ "$HTTP_CODE" == "401" ]; then
@@ -162,17 +161,22 @@ jobs:
         echo "report_xml=${REPORT_XML}" >> $GITHUB_OUTPUT
         echo "report_html=${REPORT_HTML}" >> $GITHUB_OUTPUT
         
-        # Parse XML for summary (requires xmlstarlet or alternative)
+        # Parse XML for summary - FIXED: Keep set +e during parsing
+        set +e
         if [ -f "$REPORT_XML" ]; then
-          # Count alerts by risk level using grep (simple method)
           HIGH_COUNT=$(grep -c 'riskcode="3"' "$REPORT_XML" 2>/dev/null || echo "0")
           MEDIUM_COUNT=$(grep -c 'riskcode="2"' "$REPORT_XML" 2>/dev/null || echo "0")
           LOW_COUNT=$(grep -c 'riskcode="1"' "$REPORT_XML" 2>/dev/null || echo "0")
-          
-          echo "high_count=${HIGH_COUNT}" >> $GITHUB_OUTPUT
-          echo "medium_count=${MEDIUM_COUNT}" >> $GITHUB_OUTPUT
-          echo "low_count=${LOW_COUNT}" >> $GITHUB_OUTPUT
+        else
+          HIGH_COUNT=0
+          MEDIUM_COUNT=0
+          LOW_COUNT=0
         fi
+        set -e
+        
+        echo "high_count=${HIGH_COUNT}" >> $GITHUB_OUTPUT
+        echo "medium_count=${MEDIUM_COUNT}" >> $GITHUB_OUTPUT
+        echo "low_count=${LOW_COUNT}" >> $GITHUB_OUTPUT
     
     - name: Upload results to DefectDojo
       if: steps.health_check.outputs.is_reachable == 'true'
