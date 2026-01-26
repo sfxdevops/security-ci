@@ -144,6 +144,7 @@ jobs:
         echo "Starting ZAP scan against $TARGET_URL"
         
         # Run ZAP in Docker - use -x for XML output
+        set +e
         docker run --rm \
           -v $(pwd)/$REPORT_DIR:/zap/wrk:rw \
           --name zap-scanner \
@@ -238,6 +239,7 @@ jobs:
 
 
         echo "✓ No critical vulnerabilities found"
+
 
 
 
