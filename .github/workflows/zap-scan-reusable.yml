@@ -27,62 +27,7 @@ on:
         required: true
       DEFECTDOJO_ENGAGEMENT_PREPROD:
         required: false
-      DEFECTDOJO_ENGAGEMENT_DEV:- name: Run ZAP Baseline Scan
-      id: zap_scan
-      if: steps.health_check.outputs.is_reachable == 'true'
-      run: |
-        TARGET_URL="${{ steps.config.outputs.target_url }}"
-        REPORT_DIR="./zap-reports"
-        mkdir -p $REPORT_DIR
-        
-        TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-        REPORT_XML="$REPORT_DIR/zap-report-$TIMESTAMP.xml"  
-        REPORT_HTML="$REPORT_DIR/zap-report-$TIMESTAMP.html"
-        
-        echo "Starting ZAP scan against $TARGET_URL"
-        
-        # Disable exit on error for this entire section
-        set +e
-        
-        # Run ZAP scan
-        docker run --rm \
-          -v $(pwd)/$REPORT_DIR:/zap/wrk:rw \
-          --name zap-scanner \
-          -u 0:0 \
-          zaproxy/zap-stable:latest \
-          zap-baseline.py \
-          -t "$TARGET_URL" \
-          -x "zap-report-$TIMESTAMP.xml" \
-          -r "zap-report-$TIMESTAMP.html" \
-          -I
-        
-        ZAP_EXIT_CODE=$?
-        
-        echo "ZAP scan completed with exit code: ${ZAP_EXIT_CODE}"
-        
-        # Parse XML for summary
-        if [ -f "$REPORT_XML" ]; then
-          HIGH_COUNT=$(grep -c 'riskcode="3"' "$REPORT_XML" 2>/dev/null || echo "0")
-          MEDIUM_COUNT=$(grep -c 'riskcode="2"' "$REPORT_XML" 2>/dev/null || echo "0")
-          LOW_COUNT=$(grep -c 'riskcode="1"' "$REPORT_XML" 2>/dev/null || echo "0")
-        else
-          HIGH_COUNT=0
-          MEDIUM_COUNT=0
-          LOW_COUNT=0
-        fi
-        
-        # Re-enable exit on error ONLY at the very end
-        set -e
-        
-        # Write all outputs together in a single atomic operation
-        {
-          echo "zap_exit_code=${ZAP_EXIT_CODE}"
-          echo "report_xml=${REPORT_XML}"
-          echo "report_html=${REPORT_HTML}"
-          echo "high_count=${HIGH_COUNT}"
-          echo "medium_count=${MEDIUM_COUNT}"
-          echo "low_count=${LOW_COUNT}"
-        } >> $GITHUB_OUTPUT
+      DEFECTDOJO_ENGAGEMENT_DEV:
         required: false
 
 permissions:
@@ -310,4 +255,5 @@ jobs:
         fi
         
         echo "✓ No critical vulnerabilities found"
+
 
