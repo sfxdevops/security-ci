@@ -141,10 +141,9 @@ jobs:
           -J "zap-report-$TIMESTAMP.json" \
           -r "zap-report-$TIMESTAMP.html" \
           -I
-          
+        
         ZAP_EXIT_CODE=$?
-        set -e
-
+        set -e 
         
         # ZAP exit codes:
         # 0 = no alerts
@@ -190,7 +189,7 @@ jobs:
       with:
         name: zap-reports-${{ inputs.environment }}-${{ inputs.service_name }}
         path: zap-reports/*
-        retention-days: 7
+        retention-days: 30
     
     - name: Generate scan summary
       if: always() && steps.health_check.outputs.is_reachable == 'true'
