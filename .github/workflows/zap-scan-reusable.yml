@@ -121,6 +121,18 @@ jobs:
           echo "::warning::Application not reachable after $MAX_ATTEMPTS attempts"
           echo "is_reachable=false" >> "$GITHUB_OUTPUT"
         fi
+
+    - name: Test GITHUB_OUTPUT
+      run: |
+        echo "Simple test"
+        echo "test_value=hello" >> "$GITHUB_OUTPUT"
+        echo "test_number=123" >> "$GITHUB_OUTPUT"
+        echo "Test outputs written"
+    
+    - name: Verify test output
+      run: |
+        echo "GITHUB_OUTPUT contents:"
+        cat "$GITHUB_OUTPUT"
     
     - name: Run ZAP Baseline Scan
       id: zap_scan
@@ -253,4 +265,5 @@ jobs:
         fi
         
         echo "✓ No critical vulnerabilities found"
+
 
